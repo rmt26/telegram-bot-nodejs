@@ -1,17 +1,23 @@
-# Telegram Bot - Node.js
+# Telegram Bot Serba Guna - Node.js
 
-Bot Telegram sederhana menggunakan Node.js dengan metode **polling** dan **switch case**.
+Bot Telegram serba guna menggunakan Node.js dengan metode **polling**, **switch case**, dan **tombol inline keyboard**.
 
 ## Fitur
 
-| Perintah | Deskripsi |
-|----------|-----------|
-| `/start` | Memulai bot dan menampilkan daftar perintah |
-| `/help` | Menampilkan bantuan |
-| `/info` | Informasi tentang bot (versi, runtime, uptime) |
-| `/time` | Menampilkan waktu saat ini (WIB) |
-| `/echo <teks>` | Mengulang teks yang dikirim |
-| `/about` | Tentang pembuat bot |
+| Perintah / Tombol | Deskripsi |
+|--------------------|-----------|
+| `/start` | Menu utama dengan tombol inline |
+| `/menu` | Tampilkan menu tombol |
+| 🎵 **YouTube MP3** (`/ytmp3 <url>`) | Download lagu dari YouTube sebagai MP3 |
+| 📌 **Pinterest** (`/pin <kata kunci>`) | Cari gambar dari Pinterest |
+| 🔍 **Wikipedia** (`/wiki <kata kunci>`) | Cari artikel di Wikipedia Indonesia |
+| 😂 **Meme Random** (`/meme`) | Kirim meme random dari Reddit |
+| 🌤 **Cuaca** (`/cuaca <kota>`) | Cek cuaca kota saat ini |
+| 💬 **Quotes** (`/quote`) | Kutipan motivasi random |
+| ℹ️ **Info Bot** | Informasi tentang bot |
+| ❓ **Bantuan** | Daftar semua perintah |
+
+### Semua fitur bisa diakses melalui **tombol inline** atau **perintah teks**!
 
 ## Prasyarat
 
@@ -142,6 +148,9 @@ pkill -f "node index.js"
 
 - **Node.js** - Runtime JavaScript
 - **node-telegram-bot-api** - Library untuk Telegram Bot API
+- **@distube/ytdl-core** - Download audio dari YouTube
+- **axios** - HTTP client untuk API requests
+- **cheerio** - HTML parser untuk scraping Pinterest
 - **dotenv** - Manajemen environment variables
 
 ## Lisensi

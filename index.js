@@ -1,10 +1,9 @@
 require('dotenv').config();
 const TelegramBot = require('node-telegram-bot-api');
-const ytdl = require('@distube/ytdl-core');
 const axios = require('axios');
-const cheerio = require('cheerio');
 const fs = require('fs');
 const path = require('path');
+const { exec } = require('child_process');
 
 const token = process.env.TELEGRAM_BOT_TOKEN;
 
@@ -97,7 +96,6 @@ bot.on('callback_query', async (query) => {
   bot.answerCallbackQuery(query.id);
 
   switch (data) {
-    // --- YouTube MP3 ---
     case 'menu_ytmp3':
       setState(chatId, 'waiting_ytmp3');
       bot.sendMessage(
@@ -107,17 +105,15 @@ bot.on('callback_query', async (query) => {
       );
       break;
 
-    // --- Pinterest ---
     case 'menu_pinterest':
       setState(chatId, 'waiting_pinterest');
       bot.sendMessage(
         chatId,
-        '📌 *Pencarian Pinterest*\n\nKirim kata kunci untuk mencari gambar di Pinterest.\n\nContoh: `anime aesthetic`',
+        '📌 *Pencarian Pinterest*\n\nKirim kata kunci untuk mencari gambar.\n\nContoh: `anime aesthetic`',
         { parse_mode: 'Markdown', ...cancelKeyboard() }
       );
       break;
 
-    // --- Wikipedia ---
     case 'menu_wiki':
       setState(chatId, 'waiting_wiki');
       bot.sendMessage(
@@ -127,12 +123,10 @@ bot.on('callback_query', async (query) => {
       );
       break;
 
-    // --- Meme ---
     case 'menu_meme':
       await sendRandomMeme(chatId);
       break;
 
-    // --- Cuaca ---
     case 'menu_weather':
       setState(chatId, 'waiting_weather');
       bot.sendMessage(
@@ -142,17 +136,15 @@ bot.on('callback_query', async (query) => {
       );
       break;
 
-    // --- Quotes ---
     case 'menu_quote':
       await sendRandomQuote(chatId);
       break;
 
-    // --- Info ---
     case 'menu_info':
       bot.sendMessage(
         chatId,
         `ℹ️ *Informasi Bot*\n\n` +
-          `Versi: 2.0.0\n` +
+          `Versi: 2.1.0\n` +
           `Runtime: Node.js ${process.version}\n` +
           `Platform: ${process.platform}\n` +
           `Uptime: ${Math.floor(process.uptime())} detik\n\n` +
@@ -161,7 +153,6 @@ bot.on('callback_query', async (query) => {
       );
       break;
 
-    // --- Help ---
     case 'menu_help':
       bot.sendMessage(
         chatId,
@@ -180,18 +171,12 @@ bot.on('callback_query', async (query) => {
       );
       break;
 
-    // --- Cancel ---
     case 'cancel':
       clearState(chatId);
       bot.sendMessage(chatId, '❌ Dibatalkan.\n\nPilih fitur lain:', mainMenuKeyboard());
       break;
 
-    // --- More Pinterest results ---
     default:
-      if (data.startsWith('pin_more_')) {
-        const keyword = data.replace('pin_more_', '');
-        await searchPinterest(chatId, keyword);
-      }
       break;
   }
 });
@@ -261,64 +246,107 @@ bot.on('message', (msg) => {
   }
 });
 
-// ============ YOUTUBE MP3 DOWNLOAD ============
+// ============ YOUTUBE MP3 DOWNLOAD (yt-dlp) ============
+function isValidYouTubeURL(url) {
+  return /^(https?:\/\/)?(www\.)?(youtube\.com\/(watch\?v=|shorts\/)|youtu\.be\/|music\.youtube\.com\/watch\?v=)[\w-]+/.test(url);
+}
+
+function runCommand(command) {
+  return new Promise((resolve, reject) => {
+    exec(command, { timeout: 120000, maxBuffer: 1024 * 1024 * 10 }, (error, stdout, stderr) => {
+      if (error) {
+        reject(new Error(stderr || error.message));
+      } else {
+        resolve(stdout.trim());
+      }
+    });
+  });
+}
+
 async function downloadYTMP3(chatId, url) {
-  if (!ytdl.validateURL(url)) {
-    bot.sendMessage(chatId, '❌ URL YouTube tidak valid. Kirim link yang benar.', cancelKeyboard());
+  if (!isValidYouTubeURL(url)) {
+    bot.sendMessage(chatId, '❌ URL YouTube tidak valid. Kirim link yang benar.', mainMenuKeyboard());
     return;
   }
 
+  const tmpDir = path.join(require('os').tmpdir(), 'ytmp3-' + Date.now());
+
   try {
+    fs.mkdirSync(tmpDir, { recursive: true });
+
     bot.sendMessage(chatId, '⏳ Sedang memproses... Tunggu sebentar ya.');
 
-    const info = await ytdl.getInfo(url);
-    const title = info.videoDetails.title;
-    const duration = parseInt(info.videoDetails.lengthSeconds, 10);
-
-    if (duration > 600) {
-      bot.sendMessage(
-        chatId,
-        '❌ Video terlalu panjang (maks 10 menit untuk download MP3).',
-        mainMenuKeyboard()
+    // Get video info first
+    let title = 'audio';
+    try {
+      const infoJson = await runCommand(
+        `yt-dlp --no-playlist --print "%(title)s" "${url}" 2>/dev/null`
       );
-      return;
+      title = infoJson || 'audio';
+    } catch (e) {
+      // Title fetch failed, continue with default
     }
 
-    const sanitizedTitle = title.replace(/[^\w\s-]/g, '').substring(0, 50);
-    const filePath = path.join('/tmp', `${sanitizedTitle}-${Date.now()}.mp3`);
+    // Download audio as mp3
+    const outputTemplate = path.join(tmpDir, '%(id)s.%(ext)s');
+    const downloadCmd = [
+      'yt-dlp',
+      '-x',
+      '--audio-format mp3',
+      '--audio-quality 128K',
+      `--max-filesize 50m`,
+      '--no-playlist',
+      '--no-warnings',
+      '-o', `"${outputTemplate}"`,
+      `"${url}"`,
+    ].join(' ');
 
-    const stream = ytdl(url, {
-      filter: 'audioonly',
-      quality: 'highestaudio',
-    });
+    await runCommand(downloadCmd);
 
-    const writeStream = fs.createWriteStream(filePath);
-    stream.pipe(writeStream);
+    // Find the downloaded mp3 file
+    const files = fs.readdirSync(tmpDir).filter(f => f.endsWith('.mp3'));
+    if (files.length === 0) {
+      throw new Error('File MP3 tidak ditemukan setelah download.');
+    }
 
-    await new Promise((resolve, reject) => {
-      writeStream.on('finish', resolve);
-      writeStream.on('error', reject);
-      stream.on('error', reject);
-    });
+    const filePath = path.join(tmpDir, files[0]);
+    const stats = fs.statSync(filePath);
+
+    if (stats.size > 50 * 1024 * 1024) {
+      throw new Error('File terlalu besar untuk dikirim via Telegram (maks 50MB).');
+    }
 
     await bot.sendAudio(chatId, filePath, {
       caption: `🎵 ${title}`,
       title: title,
     });
 
-    fs.unlink(filePath, () => {});
-
     bot.sendMessage(chatId, 'Pilih fitur lain:', mainMenuKeyboard());
   } catch (error) {
     console.error('YouTube MP3 error:', error.message);
-    if (typeof filePath !== 'undefined') {
-      fs.unlink(filePath, () => {});
+
+    let errorMsg = '❌ Gagal mendownload audio.';
+    if (error.message.includes('not a bot') || error.message.includes('Sign in')) {
+      errorMsg = '❌ YouTube memblokir request dari server ini.\n\n' +
+        'Pastikan `yt-dlp` terinstall dan jalankan bot dari *HP/PC kamu* (bukan server).';
+    } else if (error.message.includes('not found') || error.message.includes('command not found') || error.message.includes('ENOENT')) {
+      errorMsg = '❌ `yt-dlp` belum terinstall.\n\n' +
+        'Install di Termux:\n`pip install yt-dlp`\n\n' +
+        'Install di PC:\n`pip install yt-dlp`';
+    } else if (error.message.includes('terlalu besar')) {
+      errorMsg = '❌ File terlalu besar (maks 50MB untuk Telegram).';
     }
-    bot.sendMessage(
-      chatId,
-      '❌ Gagal mendownload audio. Pastikan link valid dan coba lagi.',
-      mainMenuKeyboard()
-    );
+
+    bot.sendMessage(chatId, errorMsg, { parse_mode: 'Markdown', ...mainMenuKeyboard() });
+  } finally {
+    // Cleanup temp directory
+    try {
+      if (fs.existsSync(tmpDir)) {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    } catch (e) {
+      // Ignore cleanup errors
+    }
   }
 }
 
@@ -327,53 +355,61 @@ async function searchPinterest(chatId, keyword) {
   try {
     bot.sendMessage(chatId, `🔍 Mencari "${keyword}" di Pinterest...`);
 
+    // Use Pinterest search via HTML scraping
     const response = await axios.get(
-      `https://www.pinterest.com/resource/BaseSearchResource/get/`,
+      `https://www.pinterest.com/search/pins/?q=${encodeURIComponent(keyword)}`,
       {
-        params: {
-          source_url: `/search/pins/?q=${encodeURIComponent(keyword)}`,
-          data: JSON.stringify({
-            options: {
-              query: keyword,
-              scope: 'pins',
-              page_size: 10,
-            },
-          }),
-        },
         headers: {
-          'User-Agent':
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-          Accept: 'application/json',
+          'User-Agent': 'Mozilla/5.0 (Linux; Android 13; SM-A536B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+          'Accept-Language': 'id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7',
         },
         timeout: 15000,
       }
     );
 
-    const results = response.data?.resource_response?.data?.results;
+    // Extract image URLs from Pinterest HTML/JSON
+    const html = response.data;
+    const images = [];
 
-    if (!results || results.length === 0) {
-      bot.sendMessage(chatId, `❌ Tidak ditemukan hasil untuk "${keyword}".`, mainMenuKeyboard());
-      return;
+    // Try extracting from inline JSON data
+    const jsonMatch = html.match(/"orig":\s*\{"url":\s*"([^"]+)"/g);
+    if (jsonMatch) {
+      for (const match of jsonMatch) {
+        const urlMatch = match.match(/"url":\s*"([^"]+)"/);
+        if (urlMatch && urlMatch[1] && images.length < 5) {
+          images.push(urlMatch[1]);
+        }
+      }
     }
 
-    const images = results
-      .filter((pin) => pin.images && pin.images.orig)
-      .slice(0, 5);
+    // Fallback: extract from img tags with pinimg
+    if (images.length === 0) {
+      const imgMatches = html.match(/https:\/\/i\.pinimg\.com\/[^\s"']+/g);
+      if (imgMatches) {
+        const uniqueImages = [...new Set(imgMatches)]
+          .filter(url => !url.includes('75x75') && !url.includes('70x70'))
+          .map(url => url.replace(/\/\d+x\d*\//, '/736x/'))
+          .slice(0, 5);
+        images.push(...uniqueImages);
+      }
+    }
 
     if (images.length === 0) {
-      bot.sendMessage(chatId, `❌ Tidak ditemukan gambar untuk "${keyword}".`, mainMenuKeyboard());
+      // Fallback to image search
+      await searchImagesFallback(chatId, keyword + ' pinterest');
       return;
     }
 
-    const media = images.map((pin) => ({
+    const media = images.map((url, i) => ({
       type: 'photo',
-      media: pin.images.orig.url,
-      caption: pin.grid_title || '',
+      media: url,
+      caption: i === 0 ? `📌 Hasil Pinterest: "${keyword}"` : '',
     }));
 
     await bot.sendMediaGroup(chatId, media);
 
-    bot.sendMessage(chatId, `📌 ${images.length} gambar ditemukan untuk "${keyword}"`, {
+    bot.sendMessage(chatId, `📌 ${images.length} gambar ditemukan!`, {
       reply_markup: {
         inline_keyboard: [
           [{ text: '🔄 Cari lagi', callback_data: 'menu_pinterest' }],
@@ -383,58 +419,54 @@ async function searchPinterest(chatId, keyword) {
     });
   } catch (error) {
     console.error('Pinterest error:', error.message);
-
     try {
-      await searchPinterestFallback(chatId, keyword);
+      await searchImagesFallback(chatId, keyword);
     } catch (fallbackError) {
-      console.error('Pinterest fallback error:', fallbackError.message);
+      console.error('Image search fallback error:', fallbackError.message);
       bot.sendMessage(
         chatId,
-        `❌ Gagal mencari gambar Pinterest. Coba lagi nanti.`,
+        '❌ Gagal mencari gambar. Coba lagi nanti.',
         mainMenuKeyboard()
       );
     }
   }
 }
 
-async function searchPinterestFallback(chatId, keyword) {
+// Fallback image search using Unsplash
+async function searchImagesFallback(chatId, keyword) {
   const response = await axios.get(
-    `https://www.pinterest.com/search/pins/?q=${encodeURIComponent(keyword)}`,
+    `https://unsplash.com/napi/search/photos?query=${encodeURIComponent(keyword)}&per_page=5`,
     {
       headers: {
-        'User-Agent':
-          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'User-Agent': 'Mozilla/5.0 (Linux; Android 13; SM-A536B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
+        'Accept': 'application/json',
       },
       timeout: 15000,
     }
   );
 
-  const $ = cheerio.load(response.data);
-  const images = [];
-
-  $('img[src*="pinimg.com"]').each((i, el) => {
-    if (i >= 5) return false;
-    const src = $(el).attr('src');
-    if (src && src.includes('pinimg.com')) {
-      const highRes = src.replace(/\/\d+x\//, '/originals/');
-      images.push(highRes);
-    }
-  });
-
-  if (images.length === 0) {
+  const results = response.data?.results;
+  if (!results || results.length === 0) {
     bot.sendMessage(chatId, `❌ Tidak ditemukan gambar untuk "${keyword}".`, mainMenuKeyboard());
     return;
   }
 
-  const media = images.map((url, i) => ({
+  const media = results.slice(0, 5).map((photo, i) => ({
     type: 'photo',
-    media: url,
-    caption: i === 0 ? `📌 Hasil Pinterest: "${keyword}"` : '',
+    media: photo.urls.regular || photo.urls.small,
+    caption: i === 0 ? `📌 Hasil pencarian: "${keyword}"` : '',
   }));
 
   await bot.sendMediaGroup(chatId, media);
 
-  bot.sendMessage(chatId, 'Pilih fitur lain:', mainMenuKeyboard());
+  bot.sendMessage(chatId, 'Pilih fitur lain:', {
+    reply_markup: {
+      inline_keyboard: [
+        [{ text: '🔄 Cari lagi', callback_data: 'menu_pinterest' }],
+        [{ text: '🏠 Menu Utama', callback_data: 'cancel' }],
+      ],
+    },
+  });
 }
 
 // ============ WIKIPEDIA SEARCH ============
@@ -519,11 +551,11 @@ async function getWeather(chatId, city) {
     const country = area.country[0].value;
 
     const message =
-      `🌤 *Cuaca di ${areaName}, ${country}*\n\n` +
+      `🌤 *Cuaca di ${escapeMarkdown(areaName)}, ${escapeMarkdown(country)}*\n\n` +
       `🌡 Suhu: ${current.temp_C}°C (terasa ${current.FeelsLikeC}°C)\n` +
       `💧 Kelembaban: ${current.humidity}%\n` +
       `🌬 Angin: ${current.windspeedKmph} km/h ${current.winddir16Point}\n` +
-      `☁️ Kondisi: ${current.weatherDesc[0].value}\n` +
+      `☁️ Kondisi: ${escapeMarkdown(current.weatherDesc[0].value)}\n` +
       `👁 Jarak Pandang: ${current.visibility} km`;
 
     bot.sendMessage(chatId, message, { parse_mode: 'Markdown', ...mainMenuKeyboard() });

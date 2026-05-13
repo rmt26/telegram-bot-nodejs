@@ -23,6 +23,8 @@ Bot Telegram serba guna menggunakan Node.js dengan metode **polling**, **switch 
 
 - [Node.js](https://nodejs.org/) v16 atau lebih baru
 - Token bot dari [BotFather](https://t.me/BotFather) di Telegram
+- [yt-dlp](https://github.com/yt-dlp/yt-dlp) - Untuk fitur YouTube MP3 (`pip install yt-dlp`)
+- [FFmpeg](https://ffmpeg.org/) - Untuk konversi audio
 
 ## Cara Mendapatkan Token Bot
 
@@ -76,7 +78,8 @@ Buka Termux lalu jalankan perintah berikut satu per satu:
 
 ```bash
 pkg update && pkg upgrade -y
-pkg install nodejs git -y
+pkg install nodejs git python ffmpeg -y
+pip install yt-dlp
 ```
 
 ### 3. Clone Repository
@@ -148,9 +151,8 @@ pkill -f "node index.js"
 
 - **Node.js** - Runtime JavaScript
 - **node-telegram-bot-api** - Library untuk Telegram Bot API
-- **@distube/ytdl-core** - Download audio dari YouTube
+- **yt-dlp** - Download audio dari YouTube (CLI external)
 - **axios** - HTTP client untuk API requests
-- **cheerio** - HTML parser untuk scraping Pinterest
 - **dotenv** - Manajemen environment variables
 
 ## Lisensi

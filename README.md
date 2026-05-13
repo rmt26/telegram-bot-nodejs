@@ -14,6 +14,8 @@ Bot Telegram serba guna menggunakan Node.js dengan metode **polling**, **switch 
 | 😂 **Meme Random** (`/meme`) | Kirim meme random dari Reddit |
 | 🌤 **Cuaca** (`/cuaca <kota>`) | Cek cuaca kota saat ini |
 | 💬 **Quotes** (`/quote`) | Kutipan motivasi random |
+| 📁 **Sfile.co** (`/sfile <kata kunci>`) | Cari file di Sfile.co |
+| ⬇️ **Sfile Download** (`/sfdl <url>`) | Download file dari link Sfile.co |
 | ℹ️ **Info Bot** | Informasi tentang bot |
 | ❓ **Bantuan** | Daftar semua perintah |
 
@@ -153,6 +155,7 @@ pkill -f "node index.js"
 - **node-telegram-bot-api** - Library untuk Telegram Bot API
 - **yt-dlp** - Download audio dari YouTube (CLI external)
 - **axios** - HTTP client untuk API requests
+- **cheerio** - HTML parser untuk scraping Sfile.co
 - **dotenv** - Manajemen environment variables
 
 ## Lisensi

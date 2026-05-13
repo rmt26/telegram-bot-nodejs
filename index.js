@@ -1,6 +1,7 @@
 require('dotenv').config();
 const TelegramBot = require('node-telegram-bot-api');
 const axios = require('axios');
+const cheerio = require('cheerio');
 const fs = require('fs');
 const path = require('path');
 const { exec } = require('child_process');
@@ -53,6 +54,10 @@ function mainMenuKeyboard() {
           { text: '💬 Quotes', callback_data: 'menu_quote' },
         ],
         [
+          { text: '📁 Sfile.co', callback_data: 'menu_sfile' },
+          { text: '⬇️ Sfile Download', callback_data: 'menu_sfile_dl' },
+        ],
+        [
           { text: 'ℹ️ Info Bot', callback_data: 'menu_info' },
           { text: '❓ Bantuan', callback_data: 'menu_help' },
         ],
@@ -96,6 +101,24 @@ bot.on('callback_query', async (query) => {
   bot.answerCallbackQuery(query.id);
 
   switch (data) {
+    case 'menu_sfile':
+      setState(chatId, 'waiting_sfile_search');
+      bot.sendMessage(
+        chatId,
+        '📁 *Pencarian Sfile.co*\n\nKirim kata kunci untuk mencari file di Sfile.co.\n\nContoh: `config http custom`',
+        { parse_mode: 'Markdown', ...cancelKeyboard() }
+      );
+      break;
+
+    case 'menu_sfile_dl':
+      setState(chatId, 'waiting_sfile_download');
+      bot.sendMessage(
+        chatId,
+        '⬇️ *Download Sfile.co*\n\nKirim link Sfile.co untuk download file.\n\nContoh:\n`https://sfile.co/xxxxxxx`',
+        { parse_mode: 'Markdown', ...cancelKeyboard() }
+      );
+      break;
+
     case 'menu_ytmp3':
       setState(chatId, 'waiting_ytmp3');
       bot.sendMessage(
@@ -144,7 +167,7 @@ bot.on('callback_query', async (query) => {
       bot.sendMessage(
         chatId,
         `ℹ️ *Informasi Bot*\n\n` +
-          `Versi: 2.1.0\n` +
+          `Versi: 3.0.0\n` +
           `Runtime: Node.js ${process.version}\n` +
           `Platform: ${process.platform}\n` +
           `Uptime: ${Math.floor(process.uptime())} detik\n\n` +
@@ -165,6 +188,8 @@ bot.on('callback_query', async (query) => {
           '/wiki <kata kunci> - Cari di Wikipedia\n' +
           '/meme - Meme random\n' +
           '/cuaca <kota> - Cek cuaca\n' +
+          '/sfile <kata kunci> - Cari file di Sfile.co\n' +
+          '/sfdl <url> - Download file dari Sfile.co\n' +
           '/quote - Quotes random\n\n' +
           'Atau gunakan tombol menu di atas! 👆',
         { parse_mode: 'Markdown', ...mainMenuKeyboard() }
@@ -177,6 +202,15 @@ bot.on('callback_query', async (query) => {
       break;
 
     default:
+      if (data.startsWith('sfile_dl_')) {
+        const fileId = data.replace('sfile_dl_', '');
+        downloadSfile(chatId, `https://sfile.co/${fileId}`);
+      } else if (data.startsWith('sfile_page_')) {
+        const parts = data.replace('sfile_page_', '').split('_');
+        const page = parseInt(parts.pop(), 10);
+        const keyword = parts.join('_');
+        searchSfile(chatId, keyword, page);
+      }
       break;
   }
 });
@@ -204,6 +238,14 @@ bot.onText(/\/cuaca\s+(.+)/, (msg, match) => {
 
 bot.onText(/\/quote$/, (msg) => {
   sendRandomQuote(msg.chat.id);
+});
+
+bot.onText(/\/sfile\s+(.+)/, (msg, match) => {
+  searchSfile(msg.chat.id, match[1].trim());
+});
+
+bot.onText(/\/sfdl\s+(.+)/, (msg, match) => {
+  downloadSfile(msg.chat.id, match[1].trim());
 });
 
 // ============ MESSAGE HANDLER (STATE-BASED) ============
@@ -234,6 +276,16 @@ bot.on('message', (msg) => {
     case 'waiting_weather':
       clearState(chatId);
       getWeather(chatId, text.trim());
+      break;
+
+    case 'waiting_sfile_search':
+      clearState(chatId);
+      searchSfile(chatId, text.trim());
+      break;
+
+    case 'waiting_sfile_download':
+      clearState(chatId);
+      downloadSfile(chatId, text.trim());
       break;
 
     default:
@@ -610,6 +662,225 @@ async function sendRandomQuote(chatId) {
         },
       }
     );
+  }
+}
+
+// ============ SFILE.CO SEARCH ============
+const SFILE_HEADERS = {
+  'User-Agent': 'Mozilla/5.0 (Linux; Android 13; SM-A536B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
+  'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+  'Accept-Language': 'id-ID,id;q=0.9,en;q=0.7',
+};
+
+async function searchSfile(chatId, keyword, page = 1) {
+  try {
+    bot.sendMessage(chatId, `🔍 Mencari "${keyword}" di Sfile.co...`);
+
+    const url = `https://sfile.co/search?q=${encodeURIComponent(keyword)}${page > 1 ? `&p=${page}` : ''}`;
+    const response = await axios.get(url, {
+      headers: SFILE_HEADERS,
+      timeout: 15000,
+    });
+
+    const $ = cheerio.load(response.data);
+    const files = [];
+
+    $('a.search-result-link[data-file-url]').each((i, el) => {
+      if (files.length >= 10) return false;
+      const fileUrl = $(el).attr('data-file-url');
+      const fileName = $(el).text().trim();
+      const sizeText = $(el).closest('.group').find('p.text-xs').text().trim();
+
+      if (fileUrl && fileName && !files.some(f => f.url === fileUrl)) {
+        const fileId = fileUrl.replace('https://sfile.co/', '');
+        files.push({
+          name: fileName,
+          size: sizeText,
+          url: fileUrl,
+          id: fileId,
+        });
+      }
+    });
+
+    if (files.length === 0) {
+      bot.sendMessage(chatId, `❌ Tidak ditemukan file untuk "${keyword}".`, mainMenuKeyboard());
+      return;
+    }
+
+    // Extract total results
+    const totalText = $('h1').text();
+    const totalMatch = totalText.match(/([\d.]+)\s*results?/);
+    const totalResults = totalMatch ? totalMatch[1] : '?';
+
+    let message = `📁 *Hasil pencarian Sfile.co*\nQuery: "${escapeMarkdown(keyword)}"\nTotal: ${totalResults} hasil | Halaman ${page}\n\n`;
+
+    files.forEach((file, i) => {
+      message += `${i + 1}. *${escapeMarkdown(file.name)}*\n    ${file.size}\n\n`;
+    });
+
+    message += 'Pilih file untuk download:';
+
+    // Create file buttons (max 5 per row, 2 columns)
+    const buttons = [];
+    for (let i = 0; i < files.length; i += 2) {
+      const row = [{ text: `${i + 1}. ${files[i].name.substring(0, 25)}`, callback_data: `sfile_dl_${files[i].id}` }];
+      if (i + 1 < files.length) {
+        row.push({ text: `${i + 2}. ${files[i + 1].name.substring(0, 25)}`, callback_data: `sfile_dl_${files[i + 1].id}` });
+      }
+      buttons.push(row);
+    }
+
+    // Navigation buttons
+    const navRow = [];
+    if (page > 1) {
+      navRow.push({ text: '⬅️ Sebelumnya', callback_data: `sfile_page_${keyword}_${page - 1}` });
+    }
+    navRow.push({ text: '➡️ Selanjutnya', callback_data: `sfile_page_${keyword}_${page + 1}` });
+    buttons.push(navRow);
+    buttons.push([{ text: '🔄 Cari lagi', callback_data: 'menu_sfile' }, { text: '🏠 Menu', callback_data: 'cancel' }]);
+
+    bot.sendMessage(chatId, message, {
+      parse_mode: 'Markdown',
+      reply_markup: { inline_keyboard: buttons },
+    });
+  } catch (error) {
+    console.error('Sfile search error:', error.message);
+    bot.sendMessage(chatId, '❌ Gagal mencari file di Sfile.co. Coba lagi nanti.', mainMenuKeyboard());
+  }
+}
+
+// ============ SFILE.CO DOWNLOAD ============
+async function downloadSfile(chatId, url) {
+  // Validate URL
+  const sfileMatch = url.match(/(?:https?:\/\/)?(?:www\.)?sfile\.(?:co|mobi)\/(\w+)/);
+  if (!sfileMatch) {
+    bot.sendMessage(chatId, '❌ URL Sfile.co tidak valid.\n\nContoh: `https://sfile.co/xxxxxxx`', { parse_mode: 'Markdown', ...mainMenuKeyboard() });
+    return;
+  }
+
+  const fileId = sfileMatch[1];
+  const filePageUrl = `https://sfile.co/${fileId}`;
+
+  try {
+    bot.sendMessage(chatId, '⏳ Mengambil info file dari Sfile.co...');
+
+    // Fetch file page
+    const response = await axios.get(filePageUrl, {
+      headers: SFILE_HEADERS,
+      timeout: 15000,
+    });
+
+    const $ = cheerio.load(response.data);
+
+    // Extract file info
+    const ogTitle = $('meta[property="og:title"]').attr('content') || 'Unknown';
+    const ogDesc = $('meta[property="og:description"]').attr('content') || '';
+    const downloadUrl = $('#download').attr('data-dw-url');
+
+    // Parse file info from description
+    const sizeMatch = ogDesc.match(/size\s+([\d.]+\s*\w+)/i);
+    const fileSize = sizeMatch ? sizeMatch[1] : 'Unknown';
+    const uploaderMatch = ogDesc.match(/uploaded by\s+(\w+)/i);
+    const uploader = uploaderMatch ? uploaderMatch[1] : 'Unknown';
+    const dateMatch = ogDesc.match(/on\s+(\d+\s+\w+\s+\d+)/i);
+    const uploadDate = dateMatch ? dateMatch[1] : 'Unknown';
+
+    if (!downloadUrl) {
+      bot.sendMessage(
+        chatId,
+        `📁 *${escapeMarkdown(ogTitle)}*\n\n` +
+          `📦 Ukuran: ${fileSize}\n` +
+          `👤 Uploader: ${uploader}\n` +
+          `📅 Tanggal: ${uploadDate}\n\n` +
+          `❌ Link download tidak tersedia. File mungkin sudah dihapus.\n\n` +
+          `🔗 Buka manual: [Klik disini](${filePageUrl})`,
+        { parse_mode: 'Markdown', ...mainMenuKeyboard() }
+      );
+      return;
+    }
+
+    // Parse file size to check if we can send via Telegram (max 50MB)
+    const sizeMB = parseSizeToMB(fileSize);
+    const canSendViaTelegram = sizeMB > 0 && sizeMB <= 50;
+
+    if (canSendViaTelegram) {
+      bot.sendMessage(chatId, `⬇️ Mendownload *${escapeMarkdown(ogTitle)}* (${fileSize})...`, { parse_mode: 'Markdown' });
+
+      try {
+        // Download the file
+        const dlResponse = await axios.get(downloadUrl, {
+          headers: {
+            ...SFILE_HEADERS,
+            'Referer': filePageUrl,
+          },
+          responseType: 'arraybuffer',
+          timeout: 120000,
+          maxContentLength: 50 * 1024 * 1024,
+        });
+
+        const tmpDir = path.join(require('os').tmpdir(), 'sfile-' + Date.now());
+        fs.mkdirSync(tmpDir, { recursive: true });
+
+        const fileName = ogTitle.replace(/[^\w\s.-]/g, '').trim() || 'file';
+        const filePath = path.join(tmpDir, fileName);
+
+        fs.writeFileSync(filePath, dlResponse.data);
+
+        await bot.sendDocument(chatId, filePath, {
+          caption: `📁 ${ogTitle}\n📦 ${fileSize} | 👤 ${uploader}`,
+        });
+
+        // Cleanup
+        try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch (e) { /* ignore */ }
+
+        bot.sendMessage(chatId, 'Pilih fitur lain:', mainMenuKeyboard());
+      } catch (dlError) {
+        console.error('Sfile direct download error:', dlError.message);
+        // Fallback: send the link
+        bot.sendMessage(
+          chatId,
+          `📁 *${escapeMarkdown(ogTitle)}*\n\n` +
+            `📦 Ukuran: ${fileSize}\n` +
+            `👤 Uploader: ${uploader}\n` +
+            `📅 Tanggal: ${uploadDate}\n\n` +
+            `⚠️ Gagal download otomatis. Silakan download manual:\n` +
+            `🔗 [Klik untuk download](${filePageUrl})`,
+          { parse_mode: 'Markdown', ...mainMenuKeyboard() }
+        );
+      }
+    } else {
+      // File too large, send link only
+      bot.sendMessage(
+        chatId,
+        `📁 *${escapeMarkdown(ogTitle)}*\n\n` +
+          `📦 Ukuran: ${fileSize}\n` +
+          `👤 Uploader: ${uploader}\n` +
+          `📅 Tanggal: ${uploadDate}\n\n` +
+          `⚠️ File terlalu besar untuk dikirim via Telegram (maks 50MB).\n` +
+          `🔗 [Klik untuk download](${filePageUrl})`,
+        { parse_mode: 'Markdown', ...mainMenuKeyboard() }
+      );
+    }
+  } catch (error) {
+    console.error('Sfile download error:', error.message);
+    bot.sendMessage(
+      chatId,
+      `❌ Gagal mengambil info file.\n\n🔗 Coba buka manual: [${filePageUrl}](${filePageUrl})`,
+      { parse_mode: 'Markdown', ...mainMenuKeyboard() }
+    );
+  }
+}
+
+function parseSizeToMB(sizeStr) {
+  const match = sizeStr.match(/([\d.]+)\s*(KB|MB|GB|bytes?)/i);
+  if (!match) return 0;
+  const value = parseFloat(match[1]);
+  const unit = match[2].toUpperCase();
+  switch (unit) {
+    case 'GB': return value * 1024;
+    case 'MB': return value;
+    case 'KB': return value / 1024;
+    default: return value / (1024 * 1024);
   }
 }
 

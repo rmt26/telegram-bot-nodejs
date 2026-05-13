@@ -17,6 +17,7 @@
   "description": "Bot Telegram sederhana menggunakan Node.js dengan polling dan switch case",
   "dependencies": {
     "axios": "^1.16.0",
+    "cheerio": "^1.2.0",
     "dotenv": "^17.4.2",
     "node-telegram-bot-api": "^0.67.0"
   }

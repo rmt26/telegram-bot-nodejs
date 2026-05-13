@@ -8,6 +8,10 @@ const path = require('path');
 
 const token = process.env.TELEGRAM_BOT_TOKEN;
 
+function escapeMarkdown(text) {
+  return text.replace(/([*_`\[\]])/g, '\\$1');
+}
+
 if (!token) {
   console.error('Error: TELEGRAM_BOT_TOKEN tidak ditemukan di file .env');
   process.exit(1);
@@ -298,8 +302,7 @@ async function downloadYTMP3(chatId, url) {
     });
 
     await bot.sendAudio(chatId, filePath, {
-      caption: `🎵 *${title}*`,
-      parse_mode: 'Markdown',
+      caption: `🎵 ${title}`,
       title: title,
     });
 
@@ -308,6 +311,9 @@ async function downloadYTMP3(chatId, url) {
     bot.sendMessage(chatId, 'Pilih fitur lain:', mainMenuKeyboard());
   } catch (error) {
     console.error('YouTube MP3 error:', error.message);
+    if (typeof filePath !== 'undefined') {
+      fs.unlink(filePath, () => {});
+    }
     bot.sendMessage(
       chatId,
       '❌ Gagal mendownload audio. Pastikan link valid dan coba lagi.',
@@ -442,7 +448,9 @@ async function searchWikipedia(chatId, keyword) {
 
     const data = response.data;
 
-    let message = `📖 *${data.title}*\n\n${data.extract || 'Tidak ada deskripsi.'}`;
+    const safeTitle = escapeMarkdown(data.title);
+    const safeExtract = escapeMarkdown(data.extract || 'Tidak ada deskripsi.');
+    let message = `📖 *${safeTitle}*\n\n${safeExtract}`;
 
     if (data.content_urls && data.content_urls.desktop) {
       message += `\n\n🔗 [Baca selengkapnya](${data.content_urls.desktop.page})`;
@@ -479,8 +487,7 @@ async function sendRandomMeme(chatId) {
     const meme = response.data;
 
     await bot.sendPhoto(chatId, meme.url, {
-      caption: `😂 *${meme.title}*\n\n👍 ${meme.ups} upvotes | 📝 r/${meme.subreddit}`,
-      parse_mode: 'Markdown',
+      caption: `😂 ${meme.title}\n\n👍 ${meme.ups} upvotes | 📝 r/${meme.subreddit}`,
     });
 
     bot.sendMessage(chatId, 'Pilih fitur lain:', {
@@ -534,7 +541,7 @@ async function sendRandomQuote(chatId) {
 
     bot.sendMessage(
       chatId,
-      `💬 _"${quote.content}"_\n\n— *${quote.author}*`,
+      `💬 _"${escapeMarkdown(quote.content)}"_\n\n— *${escapeMarkdown(quote.author)}*`,
       {
         parse_mode: 'Markdown',
         reply_markup: {
